@@ -348,15 +348,33 @@ def train(dataset="shakespeare_char", out_dir="run_0", seed_offset=0):
     # DDP settings
     backend = "nccl"  # 'nccl', 'gloo', etc.
     # system
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = (
-        "bfloat16"
-        if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-        else "float16"
-        if torch.cuda.is_available()
-        else "float32"
-    )  # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
-    compile = True if torch.cuda.is_available() else False  # do not torch compile the model on macbooks
+    if torch.cuda.is_available():
+        print("CUDA is available. Using GPU.")
+        device = "cuda"
+        if torch.cuda.is_bf16_supported():
+            print("Using bfloat16")
+            dtype = "bfloat16"
+        else:
+            print("Using float16")
+            dtype = "float16"
+        compile = True
+    else:
+        print("CUDA is not available. Using CPU.")
+        device = "cpu"
+        dtype = "float32"
+        compile = False
+
+    try:
+        # Attempt to move a small tensor to the device to verify it works
+        torch.ones(1).to(device)
+    except RuntimeError as e:
+        print(f"Error when trying to use device '{device}': {e}")
+        print("Falling back to CPU.")
+        device = "cpu"
+        dtype = "float32"
+        compile = False
+
+    print(f"Using device: {device}, dtype: {dtype}, compile: {compile}")
 
     # various inits, derived attributes, I/O setup
     # if not ddp, we are running on a single gpu, and one process
@@ -412,10 +430,15 @@ def train(dataset="shakespeare_char", out_dir="run_0", seed_offset=0):
             ]
         )
         if device_type == "cuda":
-            # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
-            x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(
-                device, non_blocking=True
-            )
+            try:
+                # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
+                x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(
+                    device, non_blocking=True
+                )
+            except RuntimeError as e:
+                print(f"Error when trying to use CUDA: {e}")
+                print("Falling back to CPU transfer method.")
+                x, y = x.to(device), y.to(device)
         else:
             x, y = x.to(device), y.to(device)
         return x, y
