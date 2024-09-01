@@ -53,6 +53,13 @@ def generate_color_palette(n):
 runs = list(labels.keys())
 colors = generate_color_palette(len(runs))
 
+# Print debug information
+print("Available runs:", list(results_info.keys()))
+if 'run_0' in results_info:
+    print("Available datasets for run_0:", list(results_info['run_0'].keys()))
+else:
+    print("run_0 not found in results_info")
+
 # Plot 1: Line plot of training loss for each dataset across the runs with labels
 for dataset in datasets:
     plt.figure(figsize=(10, 6))
