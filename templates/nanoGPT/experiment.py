@@ -351,7 +351,9 @@ def train(dataset="shakespeare_char", out_dir="run_0", seed_offset=0):
     if torch.cuda.is_available():
         print("CUDA is available. Using GPU.")
         device = "cuda"
-        if torch.cuda.is_bf16_supported():
+        # Check compute capability
+        major, minor = torch.cuda.get_device_capability()
+        if major >= 8:
             print("Using bfloat16")
             dtype = "bfloat16"
         else:
