@@ -11,6 +11,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import argparse
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 
 
 # --- BEGIN model.py ---
@@ -359,7 +361,7 @@ def train(dataset="shakespeare_char", out_dir="run_0", seed_offset=0):
         else:
             print("Using float16")
             dtype = "float16"
-        compile = True
+        compile = False  # Set this to False to disable compilation
     else:
         print("CUDA is not available. Using CPU.")
         device = "cpu"
