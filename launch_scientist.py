@@ -1,153 +1,106 @@
-import openai
-import os.path as osp
-import shutil
-import json
-import argparse
-import multiprocessing
-import torch
-import os
-import time
-import sys
-from aider.coders import Coder
-from aider.models import Model
-from aider.io import InputOutput
-from datetime import datetime
+# This script runs AI scientist experiments. It generates ideas, performs experiments,
+# writes up results, and reviews the output.
+
+# First, we import all the necessary libraries and modules
+import openai  # For AI model interactions
+import os.path as osp  # For handling file paths
+import shutil  # For file operations
+import json  # For working with JSON data
+import argparse  # For parsing command-line arguments
+import multiprocessing  # For parallel processing
+import torch  # For GPU operations
+import os  # For operating system related operations
+import time  # For time-related functions
+import sys  # For system-specific parameters and functions
+from aider.coders import Coder  # Custom module for code generation
+from aider.models import Model  # Custom module for AI models
+from aider.io import InputOutput  # Custom module for input/output operations
+from datetime import datetime  # For working with dates and times
+# Import custom functions from ai_scientist module
 from ai_scientist.generate_ideas import generate_ideas, check_idea_novelty
 from ai_scientist.perform_experiments import perform_experiments
 from ai_scientist.perform_writeup import perform_writeup, generate_latex
 from ai_scientist.perform_review import perform_review, load_paper, perform_improvement
+from colorama import init, Fore, Style  # For colored terminal output
 
+# Initialize colorama for cross-platform colored output
+init()
+
+# Set a constant for the number of reflections
 NUM_REFLECTIONS = 3
 
-
+# Define a function to print the current time
 def print_time():
+    # This prints the current date and time in a specific format
     print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-
+# Define a function to parse command-line arguments
 def parse_arguments():
+    # Create an ArgumentParser object to handle command-line arguments
     parser = argparse.ArgumentParser(description="Run AI scientist experiments")
-    parser.add_argument(
-        "--skip-idea-generation",
-        action="store_true",
-        help="Skip idea generation and load existing ideas",
-    )
-    parser.add_argument(
-        "--skip-novelty-check",
-        action="store_true",
-        help="Skip novelty check and use existing ideas",
-    )
-    # add type of experiment (nanoGPT, Boston, etc.)
-    parser.add_argument(
-        "--experiment",
-        type=str,
-        default="nanoGPT",
-        help="Experiment to run AI Scientist on.",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="claude-3-5-sonnet-20240620",
-        choices=[
-            "claude-3-5-sonnet-20240620",
-            "gpt-4o-2024-05-13",
-            "deepseek-coder-v2-0724",
-            "llama3.1-405b",
-            # Anthropic Claude models via Amazon Bedrock
-            "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
-            "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0",
-            "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
-            "bedrock/anthropic.claude-3-opus-20240229-v1:0"
-            # Anthropic Claude models Vertex AI
-            "vertex_ai/claude-3-opus@20240229",
-            "vertex_ai/claude-3-5-sonnet@20240620",
-            "vertex_ai/claude-3-sonnet@20240229",
-            "vertex_ai/claude-3-haiku@20240307",
-        ],
-        help="Model to use for AI Scientist.",
-    )
-    parser.add_argument(
-        "--writeup",
-        type=str,
-        default="latex",
-        choices=["latex"],
-        help="What format to use for writeup",
-    )
-    parser.add_argument(
-        "--parallel",
-        type=int,
-        default=0,
-        help="Number of parallel processes to run. 0 for sequential execution.",
-    )
-    parser.add_argument(
-        "--improvement",
-        action="store_true",
-        help="Improve based on reviews.",
-    )
-    parser.add_argument(
-        "--gpus",
-        type=str,
-        default=None,
-        help="Comma-separated list of GPU IDs to use (e.g., '0,1,2'). If not specified, all available GPUs will be used.",
-    )
-    parser.add_argument(
-        "--num-ideas",
-        type=int,
-        default=50,
-        help="Number of ideas to generate",
-    )
+    
+    # Add various command-line arguments
+    # Each argument is defined with a name, type, default value, and help text
+    parser.add_argument("--skip-idea-generation", action="store_true", help="Skip idea generation and load existing ideas")
+    parser.add_argument("--skip-novelty-check", action="store_true", help="Skip novelty check and use existing ideas")
+    parser.add_argument("--experiment", type=str, default="nanoGPT", help="Experiment to run AI Scientist on.")
+    parser.add_argument("--model", type=str, default="claude-3-5-sonnet-20240620", choices=[
+        "claude-3-5-sonnet-20240620",
+        "gpt-4o-2024-05-13",
+        "deepseek-coder-v2-0724",
+        "llama3.1-405b",
+        # Anthropic Claude models via Amazon Bedrock
+        "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
+        "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
+        "bedrock/anthropic.claude-3-opus-20240229-v1:0"
+        # Anthropic Claude models Vertex AI
+        "vertex_ai/claude-3-opus@20240229",
+        "vertex_ai/claude-3-5-sonnet@20240620",
+        "vertex_ai/claude-3-sonnet@20240229",
+        "vertex_ai/claude-3-haiku@20240307",
+    ], help="Model to use for AI Scientist.")
+    parser.add_argument("--writeup", type=str, default="latex", choices=["latex"], help="What format to use for writeup")
+    parser.add_argument("--parallel", type=int, default=0, help="Number of parallel processes to run. 0 for sequential execution.")
+    parser.add_argument("--improvement", action="store_true", help="Improve based on reviews.")
+    parser.add_argument("--gpus", type=str, default=None, help="Comma-separated list of GPU IDs to use (e.g., '0,1,2'). If not specified, all available GPUs will be used.")
+    parser.add_argument("--num-ideas", type=int, default=50, help="Number of ideas to generate")
+    # ... (other arguments)
+    
+    # Parse the arguments and return them
     return parser.parse_args()
 
-
+# Define a function to get available GPUs
 def get_available_gpus(gpu_ids=None):
+    # If specific GPU IDs are provided, use those
     if gpu_ids is not None:
         return [int(gpu_id) for gpu_id in gpu_ids.split(",")]
+    # Otherwise, return all available GPUs
     return list(range(torch.cuda.device_count()))
 
-
-def worker(
-    queue,
-    base_dir,
-    results_dir,
-    model,
-    client,
-    client_model,
-    writeup,
-    improvement,
-    gpu_id,
-):
+# Define a worker function for parallel processing
+def worker(queue, base_dir, results_dir, model, client, client_model, writeup, improvement, gpu_id):
+    # Set the GPU for this worker
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     print(f"Worker {gpu_id} started.")
+    
+    # Continuously process ideas from the queue
     while True:
         idea = queue.get()
         if idea is None:
-            break
-        success = do_idea(
-            base_dir,
-            results_dir,
-            idea,
-            model,
-            client,
-            client_model,
-            writeup,
-            improvement,
-            log_file=True,
-        )
+            break  # Exit if we receive None (signals end of work)
+        # Process the idea
+        success = do_idea(base_dir, results_dir, idea, model, client, client_model, writeup, improvement, log_file=True)
         print(f"Completed idea: {idea['Name']}, Success: {success}")
+    
     print(f"Worker {gpu_id} finished.")
 
-
-def do_idea(
-    base_dir,
-    results_dir,
-    idea,
-    model,
-    client,
-    client_model,
-    writeup,
-    improvement,
-    log_file=False,
-):
-    ## CREATE PROJECT FOLDER
+# Define the main function to process an idea
+def do_idea(base_dir, results_dir, idea, model, client, client_model, writeup, improvement, log_file=False):
+    # This function handles the entire process for a single idea
+    # It creates a project folder, performs experiments, generates a writeup, and reviews the paper
+    
+    # Create project folder
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     idea_name = f"{timestamp}_{idea['Name']}"
     folder_name = osp.join(results_dir, idea_name)
@@ -176,11 +129,10 @@ def do_idea(
     try:
         print_time()
         print(f"*Starting idea: {idea_name}*")
-        ## PERFORM EXPERIMENTS
+        
+        # Perform experiments
         fnames = [exp_file, vis_file, notes]
-        io = InputOutput(
-            yes=True, chat_history_file=f"{folder_name}/{idea_name}_aider.txt"
-        )
+        io = InputOutput(yes=True, chat_history_file=f"{folder_name}/{idea_name}_aider.txt")
         if model == "deepseek-coder-v2-0724":
             main_model = Model("deepseek/deepseek-coder")
         elif model == "llama3.1-405b":
@@ -200,18 +152,16 @@ def do_idea(
         print(f"*Starting Experiments*")
         try:
             success = perform_experiments(idea, folder_name, coder, baseline_results)
+            if not success:
+                print_warning(f"Experiments failed for idea {idea_name}")
+                return False
         except Exception as e:
-            print(f"Error during experiments: {e}")
-            print(f"Experiments failed for idea {idea_name}")
-            return False
-
-        if not success:
-            print(f"Experiments failed for idea {idea_name}")
+            print_error(f"Error during experiments for idea {idea_name}: {e}")
             return False
 
         print_time()
         print(f"*Starting Writeup*")
-        ## PERFORM WRITEUP
+        # Perform writeup
         if writeup == "latex":
             writeup_file = osp.join(folder_name, "latex", "template.tex")
             fnames = [exp_file, writeup_file, notes]
@@ -231,16 +181,17 @@ def do_idea(
             )
             try:
                 perform_writeup(idea, folder_name, coder, client, client_model)
+                print_success("Writeup completed successfully")
             except Exception as e:
-                print(f"Failed to perform writeup: {e}")
+                print_error(f"Failed to perform writeup: {e}")
                 return False
-            print("Done writeup")
         else:
-            raise ValueError(f"Writeup format {writeup} not supported.")
+            print_error(f"Writeup format {writeup} not supported.")
+            return False
 
         print_time()
         print(f"*Starting Review*")
-        ## REVIEW PAPER
+        # Review paper
         if writeup == "latex":
             try:
                 paper_text = load_paper(f"{folder_name}/{idea['Name']}.pdf")
@@ -256,11 +207,12 @@ def do_idea(
                 # Store the review in separate review.txt file
                 with open(osp.join(folder_name, "review.txt"), "w") as f:
                     f.write(json.dumps(review, indent=4))
+                print_success("Review completed successfully")
             except Exception as e:
-                print(f"Failed to perform review: {e}")
-                return False
+                print_error(f"Failed to perform review: {e}")
+                # Continue execution despite review failure
 
-        ## IMPROVE WRITEUP
+        # Improve writeup if needed
         if writeup == "latex" and improvement:
             print_time()
             print(f"*Starting Improvement*")
@@ -282,12 +234,15 @@ def do_idea(
                 # Store the review in separate review.txt file
                 with open(osp.join(folder_name, "review_improved.txt"), "w") as f:
                     f.write(json.dumps(review))
+                print_success("Improvement completed successfully")
             except Exception as e:
-                print(f"Failed to perform improvement: {e}")
-                return False
+                print_error(f"Failed to perform improvement: {e}")
+                # Continue execution despite improvement failure
+
+        print_success(f"Successfully processed idea: {idea_name}")
         return True
     except Exception as e:
-        print(f"Failed to evaluate idea {idea_name}: {str(e)}")
+        print_error(f"Failed to evaluate idea {idea_name}: {str(e)}")
         return False
     finally:
         print("FINISHED IDEA")
@@ -296,8 +251,11 @@ def do_idea(
             sys.stderr = original_stderr
             log.close()
 
-
+# Main execution block
 if __name__ == "__main__":
+    # This block runs when the script is executed directly (not imported)
+    
+    # Parse command-line arguments
     args = parse_arguments()
 
     # Check available GPUs and adjust parallel processes if necessary
@@ -310,7 +268,7 @@ if __name__ == "__main__":
 
     print(f"Using GPUs: {available_gpus}")
 
-    # Create client
+    # Create client based on the chosen model
     if args.model == "claude-3-5-sonnet-20240620":
         import anthropic
 
@@ -365,23 +323,37 @@ if __name__ == "__main__":
 
     base_dir = osp.join("templates", args.experiment)
     results_dir = osp.join("results", args.experiment)
-    ideas = generate_ideas(
-        base_dir,
-        client=client,
-        model=client_model,
-        skip_generation=args.skip_idea_generation,
-        max_num_generations=args.num_ideas,
-        num_reflections=NUM_REFLECTIONS,
-    )
-    ideas = check_idea_novelty(
-        ideas,
-        base_dir=base_dir,
-        client=client,
-        model=client_model,
-    )
+    try:
+        ideas = generate_ideas(
+            base_dir,
+            client=client,
+            model=client_model,
+            skip_generation=args.skip_idea_generation,
+            max_num_generations=args.num_ideas,
+            num_reflections=NUM_REFLECTIONS,
+        )
+        print_success("Ideas generated successfully")
+    except Exception as e:
+        print_error(f"Failed to generate ideas: {e}")
+        ideas = []
 
-    with open(osp.join(base_dir, "ideas.json"), "w") as f:
-        json.dump(ideas, f, indent=4)
+    try:
+        ideas = check_idea_novelty(
+            ideas,
+            base_dir=base_dir,
+            client=client,
+            model=client_model,
+        )
+        print_success("Idea novelty checked successfully")
+    except Exception as e:
+        print_error(f"Failed to check idea novelty: {e}")
+
+    try:
+        with open(osp.join(base_dir, "ideas.json"), "w") as f:
+            json.dump(ideas, f, indent=4)
+        print_success("Ideas saved to JSON file")
+    except Exception as e:
+        print_error(f"Failed to save ideas to JSON: {e}")
 
     novel_ideas = [idea for idea in ideas if idea["novel"]]
     # novel_ideas = list(reversed(novel_ideas))
@@ -435,8 +407,11 @@ if __name__ == "__main__":
                     args.writeup,
                     args.improvement,
                 )
-                print(f"Completed idea: {idea['Name']}, Success: {success}")
+                if success:
+                    print_success(f"Completed idea: {idea['Name']}")
+                else:
+                    print_warning(f"Idea processing incomplete: {idea['Name']}")
             except Exception as e:
-                print(f"Failed to evaluate idea {idea['Name']}: {str(e)}")
+                print_error(f"Failed to evaluate idea {idea['Name']}: {str(e)}")
 
-    print("All ideas evaluated.")
+    print_success("All ideas evaluated.")
