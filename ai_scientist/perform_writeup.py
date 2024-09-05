@@ -1,35 +1,75 @@
-import argparse
-import os
-import os.path as osp
-import shutil
-import subprocess
-from typing import Optional, Tuple
-from ai_scientist.generate_ideas import search_for_papers
-from ai_scientist.llm import get_response_from_llm, extract_json_between_markers
-import re
-import json
+"""
+This script performs the writeup process for an AI-generated scientific paper. It automates the creation and refinement of a LaTeX document based on research ideas and experimental results.
 
+Key functionalities:
+1. Generates and refines LaTeX content for various sections of a scientific paper (Abstract, Introduction, Related Work, etc.).
+2. Utilizes AI models (e.g., GPT-4, Claude) to generate and refine content.
+3. Manages citations by searching for relevant papers and adding them to the document.
+4. Compiles the LaTeX document into a PDF.
+5. Performs error checking and correction on the LaTeX syntax.
 
-# GENERATE LATEX
+Input files:
+- {folder_name}/latex/template.tex: LaTeX template file
+- {folder_name}/experiment.py: Experimental code
+- {folder_name}/plot.py: Visualization code
+- {folder_name}/notes.txt: Additional notes
+- {folder_name}/ideas.json: JSON file containing research ideas
+
+Output files:
+- {folder_name}/{idea['Name']}.pdf: Final compiled PDF of the paper
+- {folder_name}/{idea_name}_aider.txt: Chat history file for the AI assistant
+
+The script uses various AI models (specified by the --model argument) to generate content. It interacts with these models using different APIs (OpenAI, Anthropic, Amazon Bedrock, or Vertex AI) depending on the chosen model.
+
+The script also uses external tools like chktex for LaTeX error checking and pdflatex, bibtex for LaTeX compilation.
+
+Note: The script expects certain environment variables to be set for API keys (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY) depending on the chosen model.
+"""
+
+import argparse  # For parsing command-line arguments
+import os  # For operating system related operations
+import os.path as osp  # Shorthand for os.path, used for file path operations
+import shutil  # For high-level file operations
+import subprocess  # For running system commands
+from typing import Optional, Tuple  # For type hinting
+from ai_scientist.generate_ideas import search_for_papers  # Custom function to search for papers
+from ai_scientist.llm import get_response_from_llm, extract_json_between_markers  # Custom LLM-related functions
+import re  # For regular expressions
+import json  # For JSON operations
+from colorama import init, Fore  # For colored terminal output
+
+# Initialize colorama for colored terminal output
+init(autoreset=True)
+
+# Function to generate LaTeX document
 def generate_latex(coder, folder_name, pdf_file, timeout=30, num_error_corrections=5):
+    # Set up paths
     folder = osp.abspath(folder_name)
-    cwd = osp.join(folder, "latex")  # Fixed potential issue with path
-    writeup_file = osp.join(cwd, "template.tex")
+    cwd = osp.join(folder, "latex")  # Current working directory for LaTeX
+    writeup_file = osp.join(cwd, "template.tex")  # Path to the LaTeX template file
 
-    # Check all references are valid and in the references.bib file
+    # Check if all references are valid and in the references.bib file
     with open(writeup_file, "r") as f:
         tex_text = f.read()
+    
+    # Find all citations in the LaTeX file
     cites = re.findall(r"\\cite[a-z]*{([^}]*)}", tex_text)
+    
+    # Find the references.bib content
     references_bib = re.search(
         r"\\begin{filecontents}{references.bib}(.*?)\\end{filecontents}",
         tex_text,
         re.DOTALL,
     )
+    
     if references_bib is None:
         print("No references.bib found in template.tex")
         return
+    
     bib_text = references_bib.group(1)
     cites = [cite.strip() for item in cites for cite in item.split(",")]
+    
+    # Check each citation
     for cite in cites:
         if cite not in bib_text:
             print(f"Reference {cite} not found in references.")
@@ -37,7 +77,7 @@ def generate_latex(coder, folder_name, pdf_file, timeout=30, num_error_correctio
 If so, please modify the citation in template.tex to match the name in references.bib at the top. Otherwise, remove the cite."""
             coder.run(prompt)
 
-    # Check all included figures are actually in the directory.
+    # Check if all included figures are in the directory
     with open(writeup_file, "r") as f:
         tex_text = f.read()
     referenced_figs = re.findall(r"\\includegraphics.*?{(.*?)}", tex_text)
@@ -49,7 +89,7 @@ If so, please modify the citation in template.tex to match the name in reference
 Please ensure that the figure is in the directory and that the filename is correct. Check the notes to see what each figure contains."""
             coder.run(prompt)
 
-    # Remove duplicate figures.
+    # Remove duplicate figures
     with open(writeup_file, "r") as f:
         tex_text = f.read()
     referenced_figs = re.findall(r"\\includegraphics.*?{(.*?)}", tex_text)
@@ -61,7 +101,7 @@ Please ensure that the figure is in the directory and that the filename is corre
 If duplicated, identify the best location for the figure and remove any other."""
             coder.run(prompt)
 
-    # Remove duplicate section headers.
+    # Remove duplicate section headers
     with open(writeup_file, "r") as f:
         tex_text = f.read()
     sections = re.findall(r"\\section{([^}]*)}", tex_text)
@@ -87,12 +127,15 @@ Pay attention to any accidental uses of HTML syntax, e.g. </end instead of \\end
             coder.run(prompt)
         else:
             break
+    
+    # Compile the LaTeX document
     compile_latex(cwd, pdf_file, timeout=timeout)
 
-
+# Function to compile LaTeX document
 def compile_latex(cwd, pdf_file, timeout=30):
     print("GENERATING LATEX")
 
+    # Define LaTeX compilation commands
     commands = [
         ["pdflatex", "-interaction=nonstopmode", "template.tex"],
         ["bibtex", "template"],
@@ -100,6 +143,7 @@ def compile_latex(cwd, pdf_file, timeout=30):
         ["pdflatex", "-interaction=nonstopmode", "template.tex"],
     ]
 
+    # Run each command
     for command in commands:
         try:
             result = subprocess.run(
@@ -125,7 +169,7 @@ def compile_latex(cwd, pdf_file, timeout=30):
     except FileNotFoundError:
         print("Failed to rename PDF.")
 
-
+# Dictionary containing tips for each section of the paper
 per_section_tips = {
     "Abstract": """
 - TL;DR of the paper
@@ -147,7 +191,7 @@ Please make sure the abstract reads smoothly and is well-motivated. This should 
 """,
     "Related Work": """
 - Academic siblings of our work, i.e. alternative attempts in literature at trying to solve the same problem. 
-- Goal is to “Compare and contrast” - how does their approach differ in either assumptions or method? If their method is applicable to our Problem Setting I expect a comparison in the experimental section. If not, there needs to be a clear statement why a given method is not applicable. 
+- Goal is to "Compare and contrast" - how does their approach differ in either assumptions or method? If their method is applicable to our Problem Setting I expect a comparison in the experimental section. If not, there needs to be a clear statement why a given method is not applicable. 
 - Note: Just describing what another paper is doing is not enough. We need to compare and contrast.
 """,
     "Background": """
@@ -178,6 +222,7 @@ Please make sure the abstract reads smoothly and is well-motivated. This should 
 """,
 }
 
+# List of common LaTeX errors to check for
 error_list = """- Unenclosed math symbols
 - Only reference figures that exist in our directory
 - LaTeX syntax errors
@@ -193,6 +238,7 @@ error_list = """- Unenclosed math symbols
 - Incorrect closing of environments, e.g. </end{{figure}}> instead of \\end{{figure}}
 """
 
+# Prompt for refining a section
 refinement_prompt = (
     """Great job! Now criticize and refine only the {section} that you just wrote.
 Make this complete in this pass, do not leave any placeholders.
@@ -202,6 +248,7 @@ Pay particular attention to fixing any errors such as:
     + error_list
 )
 
+# Prompt for second refinement of a section
 second_refinement_prompt = (
     """Criticize and refine the {section} only. Recall the advice:
 {tips}
@@ -215,7 +262,7 @@ Fix any remaining errors as before:
     + error_list
 )
 
-# CITATION HELPERS
+# System message for citation helper
 citation_system_msg = """You are an ambitious AI PhD student who is looking to publish a paper that will contribute significantly to the field.
 You have already written an initial draft of the paper and now you are looking to add missing citations to related papers throughout the paper.
 The related work section already has some initial comments on which papers to add and discuss.
@@ -234,6 +281,7 @@ You will have {total_rounds} rounds to add to the references, but do not need to
 
 DO NOT ADD A CITATION THAT ALREADY EXISTS!"""
 
+# First prompt for citation helper
 citation_first_prompt = '''Round {current_round}/{total_rounds}:
 
 You have written this LaTeX draft so far:
@@ -266,6 +314,7 @@ Ensure the description is sufficient to make the change without further context.
 The query will work best if you are able to recall the exact name of the paper you are looking for, or the authors.
 This JSON will be automatically parsed, so ensure the format is precise.'''
 
+# Second prompt for citation helper
 citation_second_prompt = """Search has recovered the following articles:
 
 {papers}
@@ -290,12 +339,13 @@ In <JSON>, respond in JSON format with the following fields:
 Do not select papers that are already in the `references.bib` file at the top of the draft, or if the same citation exists under a different name.
 This JSON will be automatically parsed, so ensure the format is precise."""
 
-
+# Function to get citation aider prompt
 def get_citation_aider_prompt(
     client, model, draft, current_round, total_rounds
 ) -> Tuple[Optional[str], bool]:
     msg_history = []
     try:
+        # Get response from LLM for the first prompt
         text, msg_history = get_response_from_llm(
             citation_first_prompt.format(
                 draft=draft, current_round=current_round, total_rounds=total_rounds
@@ -309,7 +359,7 @@ def get_citation_aider_prompt(
             print("No more citations needed.")
             return None, True
 
-        ## PARSE OUTPUT
+        # Parse the LLM output
         json_output = extract_json_between_markers(text)
         assert json_output is not None, "Failed to extract JSON from LLM output"
         query = json_output["Query"]
@@ -322,6 +372,7 @@ def get_citation_aider_prompt(
         print("No papers found.")
         return None, False
 
+    # Format paper information
     paper_strings = []
     for i, paper in enumerate(papers):
         paper_strings.append(
@@ -337,6 +388,7 @@ def get_citation_aider_prompt(
     papers_str = "\n\n".join(paper_strings)
 
     try:
+        # Get response from LLM for the second prompt
         text, msg_history = get_response_from_llm(
             citation_second_prompt.format(
                 papers=papers_str,
@@ -351,14 +403,15 @@ def get_citation_aider_prompt(
         if "Do not add any" in text:
             print("Do not add any.")
             return None, False
-        ## PARSE OUTPUT
+        
+        # Parse the LLM output
         json_output = extract_json_between_markers(text)
         assert json_output is not None, "Failed to extract JSON from LLM output"
         desc = json_output["Description"]
         selected_papers = json_output["Selected"]
         selected_papers = str(selected_papers)
 
-        # convert to list
+        # Convert selected papers to list and get their bibtex
         if selected_papers != "[]":
             selected_papers = list(map(int, selected_papers.strip("[]").split(",")))
             assert all(
@@ -373,7 +426,7 @@ def get_citation_aider_prompt(
         print(f"Error: {e}")
         return None, False
 
-    # Add citation to draft
+    # Format the prompt for adding citations to the draft
     aider_format = '''The following citations have just been added to the end of the `references.bib` file definition at the top of the file:
 """
 {bibtex}
@@ -399,115 +452,122 @@ Ensure the citation is well-integrated into the text.'''
 def perform_writeup(
     idea, folder_name, coder, cite_client, cite_model, num_cite_rounds=20
 ):
-    # CURRENTLY ASSUMES LATEX
-    abstract_prompt = f"""We've provided the `latex/template.tex` file to the project. We will be filling it in section by section.
+    try:
+        # CURRENTLY ASSUMES LATEX
+        abstract_prompt = f"""We've provided the `latex/template.tex` file to the project. We will be filling it in section by section.
 
-First, please fill in the "Title" and "Abstract" sections of the writeup.
+        First, please fill in the "Title" and "Abstract" sections of the writeup.
 
-Some tips are provided below:
-{per_section_tips["Abstract"]}
+        Some tips are provided below:
+        {per_section_tips["Abstract"]}
 
-Before every paragraph, please include a brief description of what you plan to write in that paragraph in a comment.
+        Before every paragraph, please include a brief description of what you plan to write in that paragraph in a comment.
 
-Be sure to first name the file and use *SEARCH/REPLACE* blocks to perform these edits.
-"""
-    coder_out = coder.run(abstract_prompt)
-    coder_out = coder.run(
-        refinement_prompt.format(section="Abstract")
-        .replace(r"{{", "{")
-        .replace(r"}}", "}")
-    )
-    for section in [
-        "Introduction",
-        "Background",
-        "Method",
-        "Experimental Setup",
-        "Results",
-        "Conclusion",
-    ]:
-        section_prompt = f"""Please fill in the {section} of the writeup. Some tips are provided below:
-{per_section_tips[section]}
+        Be sure to first name the file and use *SEARCH/REPLACE* blocks to perform these edits.
+        """
+        coder_out = coder.run(abstract_prompt)
+        coder_out = coder.run(
+            refinement_prompt.format(section="Abstract")
+            .replace(r"{{", "{")
+            .replace(r"}}", "}")
+        )
+        for section in [
+            "Introduction",
+            "Background",
+            "Method",
+            "Experimental Setup",
+            "Results",
+            "Conclusion",
+        ]:
+            try:
+                section_prompt = f"""Please fill in the {section} of the writeup. Some tips are provided below:
+                {per_section_tips[section]}
 
-Be sure to use \cite or \citet where relevant, referring to the works provided in the file.
-Do not cite anything that is not already in `references.bib`. Do not add any new entries to this.
+                Be sure to use \cite or \citet where relevant, referring to the works provided in the file.
+                Do not cite anything that is not already in `references.bib`. Do not add any new entries to this.
 
-Keep the experimental results (figures and tables) only in the Results section, and make sure that any captions are filled in.
-In this pass, do not reference anything in later sections of the paper.
+                Keep the experimental results (figures and tables) only in the Results section, and make sure that any captions are filled in.
+                In this pass, do not reference anything in later sections of the paper.
 
-Before every paragraph, please include a brief description of what you plan to write in that paragraph in a comment.
+                Before every paragraph, please include a brief description of what you plan to write in that paragraph in a comment.
 
-Be sure to first name the file and use *SEARCH/REPLACE* blocks to perform these edits.
-"""
+                Be sure to first name the file and use *SEARCH/REPLACE* blocks to perform these edits.
+                """
+                coder_out = coder.run(section_prompt)
+                coder_out = coder.run(
+                    refinement_prompt.format(section=section)
+                    .replace(r"{{", "{")
+                    .replace(r"}}", "}")
+                )
+            except Exception as e:
+                print(Fore.YELLOW + f"Error in {section} section: {str(e)}. Continuing with next section.")
+
+        # SKETCH THE RELATED WORK
+        section_prompt = f"""Please fill in the Related Work of the writeup. Some tips are provided below:
+
+        {per_section_tips["Related Work"]}
+
+        For this section, very briefly sketch out the structure of the section, and clearly indicate what papers you intend to include.
+        Do this all in LaTeX comments using %.
+        The related work should be concise, only plan to discuss the most relevant work.
+        Do not modify `references.bib` to add any new citations, this will be filled in at a later stage.
+
+        Be sure to first name the file and use *SEARCH/REPLACE* blocks to perform these edits.
+        """
         coder_out = coder.run(section_prompt)
-        coder_out = coder.run(
-            refinement_prompt.format(section=section)
-            .replace(r"{{", "{")
-            .replace(r"}}", "}")
-        )
 
-    # SKETCH THE RELATED WORK
-    section_prompt = f"""Please fill in the Related Work of the writeup. Some tips are provided below:
-
-{per_section_tips["Related Work"]}
-
-For this section, very briefly sketch out the structure of the section, and clearly indicate what papers you intend to include.
-Do this all in LaTeX comments using %.
-The related work should be concise, only plan to discuss the most relevant work.
-Do not modify `references.bib` to add any new citations, this will be filled in at a later stage.
-
-Be sure to first name the file and use *SEARCH/REPLACE* blocks to perform these edits.
-"""
-    coder_out = coder.run(section_prompt)
-
-    # Fill paper with cites.
-    for _ in range(num_cite_rounds):
-        with open(osp.join(folder_name, "latex", "template.tex"), "r") as f:
-            draft = f.read()
-        prompt, done = get_citation_aider_prompt(
-            cite_client, cite_model, draft, _, num_cite_rounds
-        )
-        if done:
-            break
-        if prompt is not None:
-            # extract bibtex string
-            bibtex_string = prompt.split('"""')[1]
-            # insert this into draft before the "\end{filecontents}" line
-            search_str = r"\end{filecontents}"
-            draft = draft.replace(search_str, f"{bibtex_string}{search_str}")
-            with open(osp.join(folder_name, "latex", "template.tex"), "w") as f:
-                f.write(draft)
-            coder_out = coder.run(prompt)
-
-    coder_out = coder.run(
-        refinement_prompt.format(section="Related Work")
-        .replace(r"{{", "{")
-        .replace(r"}}", "}")
-    )
-
-    ## SECOND REFINEMENT LOOP
-    coder.run(
-        """Great job! Now that there is a complete draft of the entire paper, let's refine each section again.
-First, re-think the Title if necessary. Keep this concise and descriptive of the paper's concept, but try by creative with it."""
-    )
-    for section in [
-        "Abstract",
-        "Related Work",
-        "Introduction",
-        "Background",
-        "Method",
-        "Experimental Setup",
-        "Results",
-        "Conclusion",
-    ]:
-        coder_out = coder.run(
-            second_refinement_prompt.format(
-                section=section, tips=per_section_tips[section]
+        # Fill paper with cites.
+        for _ in range(num_cite_rounds):
+            with open(osp.join(folder_name, "latex", "template.tex"), "r") as f:
+                draft = f.read()
+            prompt, done = get_citation_aider_prompt(
+                cite_client, cite_model, draft, _, num_cite_rounds
             )
+            if done:
+                break
+            if prompt is not None:
+                # extract bibtex string
+                bibtex_string = prompt.split('"""')[1]
+                # insert this into draft before the "\end{filecontents}" line
+                search_str = r"\end{filecontents}"
+                draft = draft.replace(search_str, f"{bibtex_string}{search_str}")
+                with open(osp.join(folder_name, "latex", "template.tex"), "w") as f:
+                    f.write(draft)
+                coder_out = coder.run(prompt)
+
+        coder_out = coder.run(
+            refinement_prompt.format(section="Related Work")
             .replace(r"{{", "{")
             .replace(r"}}", "}")
         )
 
-    generate_latex(coder, folder_name, f"{folder_name}/{idea['Name']}.pdf")
+        ## SECOND REFINEMENT LOOP
+        coder.run(
+            """Great job! Now that there is a complete draft of the entire paper, let's refine each section again.
+            First, re-think the Title if necessary. Keep this concise and descriptive of the paper's concept, but try by creative with it."""
+        )
+        for section in [
+            "Abstract",
+            "Related Work",
+            "Introduction",
+            "Background",
+            "Method",
+            "Experimental Setup",
+            "Results",
+            "Conclusion",
+        ]:
+            coder_out = coder.run(
+                second_refinement_prompt.format(
+                    section=section, tips=per_section_tips[section]
+                )
+                .replace(r"{{", "{")
+                .replace(r"}}", "}")
+            )
+
+        generate_latex(coder, folder_name, f"{folder_name}/{idea['Name']}.pdf")
+
+    except Exception as e:
+        print(Fore.RED + f"Error in perform_writeup: {str(e)}. Continuing with execution.")
 
 
 if __name__ == "__main__":
@@ -622,10 +682,12 @@ if __name__ == "__main__":
         use_git=False,
         edit_format="diff",
     )
-    if args.no_writing:
-        generate_latex(coder, args.folder, f"{args.folder}/test.pdf")
-    else:
-        try:
+    try:
+        if args.no_writing:
+            generate_latex(coder, args.folder, f"{args.folder}/test.pdf")
+        else:
             perform_writeup(idea, folder_name, coder, client, client_model)
-        except Exception as e:
-            print(f"Failed to perform writeup: {e}")
+    except Exception as e:
+        print(Fore.RED + f"Failed to perform writeup: {str(e)}")
+    finally:
+        print(Fore.GREEN + "Execution completed.")

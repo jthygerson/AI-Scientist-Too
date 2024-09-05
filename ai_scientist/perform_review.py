@@ -1,20 +1,53 @@
-import os
-import numpy as np
-import json
-from pypdf import PdfReader
-import pymupdf
-import pymupdf4llm
-from ai_scientist.llm import (
+"""
+This module implements an AI-powered paper review system for machine learning conferences.
+
+Key functionalities:
+1. Performs automated reviews of academic papers using language models (LLMs).
+2. Supports single reviews and ensemble reviews with multiple AI reviewers.
+3. Implements a reflection mechanism to refine and improve reviews.
+4. Provides meta-review functionality to aggregate multiple reviews.
+5. Includes few-shot learning capabilities using example papers and reviews.
+6. Handles PDF parsing with multiple fallback options for robustness.
+
+Input files:
+- Example papers: ai_scientist/fewshot_examples/*.pdf
+- Example reviews: ai_scientist/fewshot_examples/*.json
+
+The main function 'perform_review' takes a paper text and various parameters, interacts
+with an LLM via the provided client, and returns a structured review in JSON format.
+
+Output:
+- The review is returned as a Python dictionary (JSON-like structure).
+- If requested, the function can also return the full message history of the LLM interaction.
+
+Note: This module relies on external LLM clients and PDF parsing libraries, which should
+be properly configured and imported in the calling environment.
+"""
+
+# Import necessary libraries
+import os  # For file and directory operations
+import numpy as np  # For numerical operations
+import json  # For working with JSON data
+from pypdf import PdfReader  # For reading PDF files
+import pymupdf  # Another library for PDF handling
+import pymupdf4llm  # PDF processing for language models
+from colorama import init, Fore  # For colored terminal output
+from ai_scientist.llm import (  # Import custom functions for working with language models
     get_response_from_llm,
     get_batch_responses_from_llm,
     extract_json_between_markers,
 )
 
+# Initialize colorama for colored terminal output
+init(autoreset=True)
+
+# Define base prompts for the AI reviewer
 reviewer_system_prompt_base = (
     "You are an AI researcher who is reviewing a paper that was submitted to a prestigious ML venue."
     "Be critical and cautious in your decision."
 )
 
+# Create two variations of the reviewer prompt: negative and positive
 reviewer_system_prompt_neg = (
     reviewer_system_prompt_base
     + "If a paper is bad or you are unsure, give it bad scores and reject it."
@@ -24,6 +57,7 @@ reviewer_system_prompt_pos = (
     + "If a paper is good or you are unsure, give it good scores and accept it."
 )
 
+# Define instructions for the AI reviewer on how to format its response
 template_instructions = """
 Respond in the following format:
 
@@ -62,6 +96,7 @@ For the "Decision" field, don't use Weak Accept, Borderline Accept, Borderline R
 This JSON will be automatically parsed, so ensure the format is precise.
 """
 
+# Define the NeurIPS review form (a long string containing review guidelines)
 neurips_form = (
     """
 ## Review Form
@@ -122,81 +157,92 @@ In general, authors should be rewarded rather than punished for being up front a
     + template_instructions
 )
 
-
+# Main function to perform a review
 def perform_review(
-    text,
-    model,
-    client,
-    num_reflections=1,
-    num_fs_examples=1,
-    num_reviews_ensemble=1,
-    temperature=0.75,
-    msg_history=None,
-    return_msg_history=False,
-    reviewer_system_prompt=reviewer_system_prompt_neg,
-    review_instruction_form=neurips_form,
+    text,  # The text of the paper to review
+    model,  # The language model to use
+    client,  # The client for interacting with the language model
+    num_reflections=1,  # Number of times to refine the review
+    num_fs_examples=1,  # Number of few-shot examples to use
+    num_reviews_ensemble=1,  # Number of reviews to generate and aggregate
+    temperature=0.75,  # Temperature for language model sampling
+    msg_history=None,  # Message history for conversation context
+    return_msg_history=False,  # Whether to return the message history
+    reviewer_system_prompt=reviewer_system_prompt_neg,  # The system prompt for the reviewer
+    review_instruction_form=neurips_form,  # The review form to use
 ):
-    if num_fs_examples > 0:
-        fs_prompt = get_review_fewshot_examples(num_fs_examples)
-        base_prompt = review_instruction_form + fs_prompt
-    else:
-        base_prompt = review_instruction_form
+    try:
+        # Prepare the base prompt with few-shot examples if requested
+        if num_fs_examples > 0:
+            fs_prompt = get_review_fewshot_examples(num_fs_examples)
+            base_prompt = review_instruction_form + fs_prompt
+        else:
+            base_prompt = review_instruction_form
 
-    base_prompt += f"""
+        # Add the paper text to the prompt
+        base_prompt += f"""
 Here is the paper you are asked to review:
 ```
 {text}
 ```"""
 
-    if num_reviews_ensemble > 1:
-        llm_review, msg_histories = get_batch_responses_from_llm(
-            base_prompt,
-            model=model,
-            client=client,
-            system_message=reviewer_system_prompt,
-            print_debug=False,
-            msg_history=msg_history,
-            # Higher temperature to encourage diversity.
-            temperature=0.75,
-            n_responses=num_reviews_ensemble,
-        )
-        parsed_reviews = []
-        for idx, rev in enumerate(llm_review):
-            try:
-                parsed_reviews.append(extract_json_between_markers(rev))
-            except Exception as e:
-                print(f"Ensemble review {idx} failed: {e}")
-        parsed_reviews = [r for r in parsed_reviews if r is not None]
-        review = get_meta_review(model, client, temperature, parsed_reviews)
+        # Generate multiple reviews if ensemble is requested
+        if num_reviews_ensemble > 1:
+            # Get multiple reviews from the language model
+            llm_review, msg_histories = get_batch_responses_from_llm(
+                base_prompt,
+                model=model,
+                client=client,
+                system_message=reviewer_system_prompt,
+                print_debug=False,
+                msg_history=msg_history,
+                temperature=0.75,
+                n_responses=num_reviews_ensemble,
+            )
+            
+            # Parse the reviews and handle any parsing errors
+            parsed_reviews = []
+            for idx, rev in enumerate(llm_review):
+                try:
+                    parsed_reviews.append(extract_json_between_markers(rev))
+                except Exception as e:
+                    print(f"{Fore.YELLOW}Warning: Ensemble review {idx} failed: {e}")
+            parsed_reviews = [r for r in parsed_reviews if r is not None]
+            
+            if not parsed_reviews:
+                raise ValueError("No valid reviews were parsed from the ensemble.")
+            
+            # Generate a meta-review from the ensemble
+            review = get_meta_review(model, client, temperature, parsed_reviews)
 
-        # take first valid in case meta-reviewer fails
-        if review is None:
-            review = parsed_reviews[0]
+            # If meta-review fails, use the first valid review
+            if review is None:
+                review = parsed_reviews[0]
 
-        # Replace numerical scores with the average of the ensemble.
-        for score, limits in [
-            ("Originality", (1, 4)),
-            ("Quality", (1, 4)),
-            ("Clarity", (1, 4)),
-            ("Significance", (1, 4)),
-            ("Soundness", (1, 4)),
-            ("Presentation", (1, 4)),
-            ("Contribution", (1, 4)),
-            ("Overall", (1, 10)),
-            ("Confidence", (1, 5)),
-        ]:
-            scores = []
-            for r in parsed_reviews:
-                if score in r and limits[1] >= r[score] >= limits[0]:
-                    scores.append(r[score])
-            review[score] = int(round(np.mean(scores)))
+            # Calculate average scores for numerical fields
+            for score, limits in [
+                ("Originality", (1, 4)),
+                ("Quality", (1, 4)),
+                ("Clarity", (1, 4)),
+                ("Significance", (1, 4)),
+                ("Soundness", (1, 4)),
+                ("Presentation", (1, 4)),
+                ("Contribution", (1, 4)),
+                ("Overall", (1, 10)),
+                ("Confidence", (1, 5)),
+            ]:
+                scores = []
+                for r in parsed_reviews:
+                    if score in r and limits[1] >= r[score] >= limits[0]:
+                        scores.append(r[score])
+                review[score] = int(round(np.mean(scores)))
 
-        # Rewrite the message history with the valid one and new aggregated review.
-        msg_history = msg_histories[0][:-1]
-        msg_history += [
-            {
-                "role": "assistant",
-                "content": f"""
+            # Update message history with the aggregated review
+            msg_history = msg_histories[0][:-1]
+            msg_history += [
+                {
+                    "role": "assistant",
+                    "content": f"""
 THOUGHT:
 I will start by aggregating the opinions of {num_reviews_ensemble} reviewers that I previously obtained.
 
@@ -205,42 +251,55 @@ REVIEW JSON:
 {json.dumps(review)}
 ```
 """,
-            }
-        ]
-    else:
-        llm_review, msg_history = get_response_from_llm(
-            base_prompt,
-            model=model,
-            client=client,
-            system_message=reviewer_system_prompt,
-            print_debug=False,
-            msg_history=msg_history,
-            temperature=temperature,
-        )
-        review = extract_json_between_markers(llm_review)
-
-    if num_reflections > 1:
-        for j in range(num_reflections - 1):
-            # print(f"Relection: {j + 2}/{num_reflections}")
-            text, msg_history = get_response_from_llm(
-                reviewer_reflection_prompt,
-                client=client,
+                }
+            ]
+        else:
+            # Generate a single review
+            llm_review, msg_history = get_response_from_llm(
+                base_prompt,
                 model=model,
+                client=client,
                 system_message=reviewer_system_prompt,
+                print_debug=False,
                 msg_history=msg_history,
                 temperature=temperature,
             )
-            review = extract_json_between_markers(text)
-            assert review is not None, "Failed to extract JSON from LLM output"
+            review = extract_json_between_markers(llm_review)
+            
+            if review is None:
+                raise ValueError("Failed to extract JSON from LLM output")
 
-            if "I am done" in text:
-                # print(f"Review generation converged after {j + 2} iterations.")
-                break
+        # Perform additional reflections if requested
+        if num_reflections > 1:
+            for j in range(num_reflections - 1):
+                # print(f"Relection: {j + 2}/{num_reflections}")
+                text, msg_history = get_response_from_llm(
+                    reviewer_reflection_prompt,
+                    client=client,
+                    model=model,
+                    system_message=reviewer_system_prompt,
+                    msg_history=msg_history,
+                    temperature=temperature,
+                )
+                review = extract_json_between_markers(text)
+                assert review is not None, "Failed to extract JSON from LLM output"
 
-    if return_msg_history:
-        return review, msg_history
-    else:
-        return review
+                if "I am done" in text:
+                    # print(f"Review generation converged after {j + 2} iterations.")
+                    break
+
+        # Return the review and optionally the message history
+        if return_msg_history:
+            return review, msg_history
+        else:
+            return review
+
+    except Exception as e:
+        print(f"{Fore.RED}Error in perform_review: {e}")
+        if return_msg_history:
+            return None, msg_history
+        else:
+            return None
 
 
 reviewer_reflection_prompt = """Round {current_round}/{num_reflections}.
@@ -275,7 +334,7 @@ def load_paper(pdf_path, num_pages=None, min_size=100):
         if len(text) < min_size:
             raise Exception("Text too short")
     except Exception as e:
-        print(f"Error with pymupdf4llm, falling back to pymupdf: {e}")
+        print(f"{Fore.YELLOW}Error with pymupdf4llm, falling back to pymupdf: {e}")
         try:
             doc = pymupdf.open(pdf_path)  # open a document
             if num_pages:
@@ -286,14 +345,18 @@ def load_paper(pdf_path, num_pages=None, min_size=100):
             if len(text) < min_size:
                 raise Exception("Text too short")
         except Exception as e:
-            print(f"Error with pymupdf, falling back to pypdf: {e}")
-            reader = PdfReader(pdf_path)
-            if num_pages is None:
-                text = "".join(page.extract_text() for page in reader.pages)
-            else:
-                text = "".join(page.extract_text() for page in reader.pages[:num_pages])
-            if len(text) < min_size:
-                raise Exception("Text too short")
+            print(f"{Fore.YELLOW}Error with pymupdf, falling back to pypdf: {e}")
+            try:
+                reader = PdfReader(pdf_path)
+                if num_pages is None:
+                    text = "".join(page.extract_text() for page in reader.pages)
+                else:
+                    text = "".join(page.extract_text() for page in reader.pages[:num_pages])
+                if len(text) < min_size:
+                    raise Exception("Text too short")
+            except Exception as e:
+                print(f"{Fore.RED}Error loading paper: {e}")
+                return ""
 
     return text
 
@@ -359,37 +422,50 @@ Be critical and cautious in your decision, find consensus, and respect the opini
 
 
 def get_meta_review(model, client, temperature, reviews):
-    # Write a meta-review from a set of individual reviews
-    review_text = ""
-    for i, r in enumerate(reviews):
-        review_text += f"""
+    try:
+        # Write a meta-review from a set of individual reviews
+        review_text = ""
+        for i, r in enumerate(reviews):
+            review_text += f"""
 Review {i + 1}/{len(reviews)}:
 ```
 {json.dumps(r)}
 ```
 """
-    base_prompt = neurips_form + review_text
+        base_prompt = neurips_form + review_text
 
-    llm_review, msg_history = get_response_from_llm(
-        base_prompt,
-        model=model,
-        client=client,
-        system_message=meta_reviewer_system_prompt.format(reviewer_count=len(reviews)),
-        print_debug=False,
-        msg_history=None,
-        temperature=temperature,
-    )
-    meta_review = extract_json_between_markers(llm_review)
-    return meta_review
+        llm_review, msg_history = get_response_from_llm(
+            base_prompt,
+            model=model,
+            client=client,
+            system_message=meta_reviewer_system_prompt.format(reviewer_count=len(reviews)),
+            print_debug=False,
+            msg_history=None,
+            temperature=temperature,
+        )
+        meta_review = extract_json_between_markers(llm_review)
+        
+        if meta_review is None:
+            raise ValueError("Failed to extract JSON from meta-review LLM output")
+        
+        return meta_review
+    except Exception as e:
+        print(f"{Fore.RED}Error in get_meta_review: {e}")
+        return None
 
 
 def perform_improvement(review, coder):
-    improvement_prompt = '''The following review has been created for your research paper:
+    try:
+        improvement_prompt = '''The following review has been created for your research paper:
 """
 {review}
 """
 
 Improve the text using the review.'''.format(
-        review=json.dumps(review)
-    )
-    coder_out = coder.run(improvement_prompt)
+            review=json.dumps(review)
+        )
+        coder_out = coder.run(improvement_prompt)
+        return coder_out
+    except Exception as e:
+        print(f"{Fore.RED}Error in perform_improvement: {e}")
+        return None

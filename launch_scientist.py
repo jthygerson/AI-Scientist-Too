@@ -1,3 +1,39 @@
+"""
+This script, launch_scientist.py, orchestrates an AI-driven scientific research process. It automates the generation, 
+evaluation, and documentation of research ideas in a specified experimental domain. The script performs the following 
+key functions:
+
+1. Idea Generation: Uses AI models to generate novel research ideas based on a given experiment template.
+2. Novelty Check: Evaluates the novelty of generated ideas to ensure originality.
+3. Experiment Simulation: Simulates experiments for each novel idea, modifying existing experiment code.
+4. Results Analysis: Analyzes and compares experimental results with baseline data.
+5. Paper Writing: Generates a LaTeX-formatted scientific paper documenting each experiment.
+6. Peer Review Simulation: Simulates a peer review process for the generated papers.
+7. Paper Improvement: Optionally improves the paper based on the simulated peer review.
+
+Input Files:
+- Template files in ./templates/{experiment_name}/: Provide the base experiment setup.
+- ./templates/{experiment_name}/run_0/final_info.json: Contains baseline results for comparison.
+- ./templates/{experiment_name}/experiment.py: The base experiment code to be modified.
+- ./templates/{experiment_name}/plot.py: Code for visualizing experimental results.
+- ./templates/{experiment_name}/latex/template.tex: LaTeX template for paper generation.
+
+Output Files and Locations:
+- ./results/{experiment_name}/{timestamp}_{idea_name}/: Directory for each processed idea, containing:
+  - Modified experiment.py and plot.py
+  - notes.txt: Detailed notes on the experiment
+  - log.txt: Execution log
+  - {idea_name}.pdf: Generated scientific paper
+  - review.txt: Simulated peer review
+  - {idea_name}_improved.pdf: Improved version of the paper (if improvement option is enabled)
+  - review_improved.txt: Review of the improved paper
+- ./templates/{experiment_name}/ideas.json: Stores all generated ideas, including novelty assessment
+
+The script supports various AI models, parallel processing on multiple GPUs, and command-line arguments for 
+customization. It uses libraries such as OpenAI, Anthropic, and custom modules (aider.coders, aider.models, 
+ai_scientist) for AI interactions and scientific process simulation.
+"""
+
 # This script runs AI scientist experiments. It generates ideas, performs experiments,
 # writes up results, and reviews the output.
 
