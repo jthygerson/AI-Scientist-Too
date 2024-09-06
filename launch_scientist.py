@@ -287,6 +287,14 @@ def do_idea(base_dir, results_dir, idea, model, client, client_model, writeup, i
             sys.stderr = original_stderr
             log.close()
 
+# Define a function to print success messages
+def print_success(message):
+    print(Fore.GREEN + message + Style.RESET_ALL)
+
+# Define a function to print error messages
+def print_error(message):
+    print(Fore.RED + message + Style.RESET_ALL)
+
 # Main execution block
 if __name__ == "__main__":
     # This block runs when the script is executed directly (not imported)
