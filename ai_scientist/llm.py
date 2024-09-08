@@ -295,20 +295,19 @@ def get_response_from_llm(
             new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
         
         elif model.startswith("ollama/"):
-            new_msg_history = msg_history + [{"role": "user", "content": msg}]
-            response = client.chat.completions.create(
-                model=model.split("/")[1],  # Extract the actual model name
-                messages=[
-                    {"role": "system", "content": system_message},
-                    *new_msg_history,
-                ],
-                temperature=temperature,
-                max_tokens=3000,
-                n=1,
-                stop=None,
-            )
-            content = response.choices[0].message.content
-            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+            ollama_model = model.split("/")[1]
+            full_prompt = f"{system_message}\n\n"
+            for msg in msg_history:
+                full_prompt += f"{msg['role']}: {msg['content']}\n"
+            full_prompt += f"user: {msg}\nassistant:"
+            
+            try:
+                response = client.generate(full_prompt)
+                content = response
+                new_msg_history = msg_history + [{"role": "user", "content": msg}, {"role": "assistant", "content": content}]
+            except Exception as e:
+                print(f"Error in OLLAMA API call for model {ollama_model}: {e}")
+                raise
         
         else:
             # Raise an error if the model is not supported
