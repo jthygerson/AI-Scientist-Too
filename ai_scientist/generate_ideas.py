@@ -605,30 +605,41 @@ if __name__ == "__main__":
                 base_url="https://openrouter.ai/api/v1",
             )
         elif args.model.startswith("ollama/"):
-            import openai
             ollama_model = args.model.split("/")[1]
             print(f"Using OLLAMA API with model {ollama_model} at {args.ollama_url}")
-            client_model = ollama_model
-            client = openai.OpenAI(
-                base_url=f"{args.ollama_url}/v1",
-                api_key="ollama",  # OLLAMA doesn't use API keys, but we need to set a non-empty value
-            )
-
-            # Test the connection
+            client_model = args.model  # Keep the full "ollama/model_name" format
+            
+            # Test the connection and model availability
             try:
-                response = requests.get(f"{args.ollama_url}/api/tags")
+                response = requests.post(f"{args.ollama_url}/api/generate", json={
+                    "model": ollama_model,
+                    "prompt": "Hello, are you available?",
+                    "stream": False
+                })
                 response.raise_for_status()
-                print("Successfully connected to OLLAMA API")
-                
-                # Check if the specified model is available
-                available_models = response.json()
-                if ollama_model not in [model['name'] for model in available_models['models']]:
-                    print(f"{Fore.YELLOW}Warning: Model {ollama_model} not found in available OLLAMA models. Please ensure it's installed.{Style.RESET_ALL}")
-                else:
-                    print(f"Model {ollama_model} is available on the OLLAMA server.")
+                print("Successfully connected to OLLAMA API and model is available.")
+                print(f"OLLAMA response: {response.json()['response']}")
             except requests.RequestException as e:
-                print(f"{Fore.RED}Failed to connect to OLLAMA API: {e}{Style.RESET_ALL}")
+                print_error(f"Failed to connect to OLLAMA API or model not available: {e}")
+                print(f"Response content: {e.response.content if hasattr(e, 'response') else 'No response content'}")
                 sys.exit(1)
+            
+            # Create a simple client object to pass around
+            class OllamaClient:
+                def __init__(self, base_url, model):
+                    self.base_url = base_url
+                    self.model = model
+                
+                def generate(self, prompt):
+                    response = requests.post(f"{self.base_url}/api/generate", json={
+                        "model": self.model,
+                        "prompt": prompt,
+                        "stream": False
+                    })
+                    response.raise_for_status()
+                    return response.json()["response"]
+            
+            client = OllamaClient(args.ollama_url, ollama_model)
         else:
             raise ValueError(f"Model {args.model} not supported.")
 
