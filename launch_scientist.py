@@ -303,6 +303,10 @@ def print_success(message):
 def print_error(message):
     print(Fore.RED + message + Style.RESET_ALL)
 
+# Define a function to print warning messages
+def print_warning(message):
+    print(Fore.YELLOW + message + Style.RESET_ALL)
+
 # Main execution block
 if __name__ == "__main__":
     # This block runs when the script is executed directly (not imported)
