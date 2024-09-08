@@ -31,6 +31,7 @@ from subprocess import TimeoutExpired  # For handling timeouts
 import sys  # For system-specific parameters and functions
 import json  # For working with JSON data
 from colorama import init, Fore, Style  # For colored console output
+import requests  # Add this import for making HTTP requests to OLLAMA
 
 # Initialize colorama for cross-platform colored output
 init()

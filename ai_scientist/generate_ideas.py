@@ -537,9 +537,25 @@ if __name__ == "__main__":
                 "gpt-4o-2024-05-13",
                 "deepseek-coder-v2-0724",
                 "llama3.1-405b",
+                # Anthropic Claude models via Amazon Bedrock
+                "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
+                "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0",
+                "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
+                "bedrock/anthropic.claude-3-opus-20240229-v1:0",
+                # Anthropic Claude models Vertex AI
+                "vertex_ai/claude-3-opus@20240229",
+                "vertex_ai/claude-3-5-sonnet@20240620",
+                "vertex_ai/claude-3-sonnet@20240229",
+                "vertex_ai/claude-3-haiku@20240307",
+                # OLLAMA models
+                "ollama/deepseek-coder-v2",
+                "ollama/phi3.5",
+                "ollama/llama3.1",
+                "ollama/gemma2",
             ],
             help="Model to use for AI Scientist.",
         )
+        parser.add_argument("--ollama-url", type=str, default="http://localhost:11434", help="URL for OLLAMA API (default: http://localhost:11434)")
         parser.add_argument(
             "--skip-idea-generation",
             action="store_true",
@@ -588,6 +604,31 @@ if __name__ == "__main__":
                 api_key=os.environ["OPENROUTER_API_KEY"],
                 base_url="https://openrouter.ai/api/v1",
             )
+        elif args.model.startswith("ollama/"):
+            import openai
+            ollama_model = args.model.split("/")[1]
+            print(f"Using OLLAMA API with model {ollama_model} at {args.ollama_url}")
+            client_model = ollama_model
+            client = openai.OpenAI(
+                base_url=f"{args.ollama_url}/v1",
+                api_key="ollama",  # OLLAMA doesn't use API keys, but we need to set a non-empty value
+            )
+
+            # Test the connection
+            try:
+                response = requests.get(f"{args.ollama_url}/api/tags")
+                response.raise_for_status()
+                print("Successfully connected to OLLAMA API")
+                
+                # Check if the specified model is available
+                available_models = response.json()
+                if ollama_model not in [model['name'] for model in available_models['models']]:
+                    print(f"{Fore.YELLOW}Warning: Model {ollama_model} not found in available OLLAMA models. Please ensure it's installed.{Style.RESET_ALL}")
+                else:
+                    print(f"Model {ollama_model} is available on the OLLAMA server.")
+            except requests.RequestException as e:
+                print(f"{Fore.RED}Failed to connect to OLLAMA API: {e}{Style.RESET_ALL}")
+                sys.exit(1)
         else:
             raise ValueError(f"Model {args.model} not supported.")
 

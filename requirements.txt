@@ -16,3 +16,4 @@ tiktoken
 wandb
 tqdm
 colorama
+requests

@@ -126,6 +126,28 @@ def get_batch_responses_from_llm(
                 new_msg_history + [{"role": "assistant", "content": c}] for c in content
             ]
         
+        elif model.startswith("ollama/"):
+            # Add the new user message to the history
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            # Make an API call to get responses
+            response = client.chat.completions.create(
+                model=model.split("/")[1],  # Extract the actual model name
+                messages=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_tokens=3000,
+                n=n_responses,
+                stop=None,
+            )
+            # Extract the content from each response
+            content = [r.message.content for r in response.choices]
+            # Create new message histories for each response
+            new_msg_history = [
+                new_msg_history + [{"role": "assistant", "content": c}] for c in content
+            ]
+        
         # Special handling for Claude models
         elif "claude" in model:
             content, new_msg_history = [], []
@@ -260,6 +282,22 @@ def get_response_from_llm(
             new_msg_history = msg_history + [{"role": "user", "content": msg}]
             response = client.chat.completions.create(
                 model="meta-llama/llama-3.1-405b-instruct",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_tokens=3000,
+                n=1,
+                stop=None,
+            )
+            content = response.choices[0].message.content
+            new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+        
+        elif model.startswith("ollama/"):
+            new_msg_history = msg_history + [{"role": "user", "content": msg}]
+            response = client.chat.completions.create(
+                model=model.split("/")[1],  # Extract the actual model name
                 messages=[
                     {"role": "system", "content": system_message},
                     *new_msg_history,
